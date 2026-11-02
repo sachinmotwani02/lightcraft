@@ -100,6 +100,9 @@ pub struct SourceInfo {
     /// Noise reduction sizes its radii in the original's pixels ([`Plan::detail_scale`]), so a
     /// preview looks like the full-size render scaled down (issue #960).
     pub native_long: Option<usize>,
+    /// Stops that bring the developed raw to its camera JPEG's median brightness (portra-looks'
+    /// exposure k): film LUT profiles start from it. 0 without an embedded JPEG.
+    pub film_ev: f32,
 }
 
 impl Default for SourceInfo {
@@ -116,6 +119,7 @@ impl Default for SourceInfo {
             mattes: None,
             local_tone: None,
             native_long: None,
+            film_ev: 0.0,
         }
     }
 }

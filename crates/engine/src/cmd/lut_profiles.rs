@@ -108,11 +108,25 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                 continue;
             }
         };
-        let display = lut.title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| name.clone());
-        let group = super::super::preset_import::group_from_dir(&group.unwrap_or_default()).unwrap_or_else(|| "Imported".into());
+        // portra-looks film LUTs: "raw_golden_vivid_roll.cube" shows as "Golden vivid roll" under "Portra film",
+        // and importing a re-baked file again replaces it instead of adding a copy
+        let film = lut.raw_log;
+        let (display, group) = if film {
+            let words = name.trim_start_matches("raw_").replace('_', " ");
+            let mut chars = words.chars();
+            (chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or(words), "Portra film".to_string())
+        } else {
+            (
+                lut.title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| name.clone()),
+                super::super::preset_import::group_from_dir(&group.unwrap_or_default()).unwrap_or_else(|| "Imported".into()),
+            )
+        };
         let slug = crate::presets::slug(&format!("{group}-{display}"));
         let mut id = format!("lut:{slug}");
         let mut n = 2;
+        if film {
+            s.lut_profiles.retain(|x| x.id != id);
+        }
         while s.lut_profiles.iter().any(|x| x.id == id) {
             id = format!("lut:{slug}-{n}");
             n += 1;

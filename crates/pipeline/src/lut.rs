@@ -14,6 +14,15 @@ pub struct Lut3d {
     pub domain_min: [f32; 3],
     pub domain_max: [f32; 3],
     pub title: Option<String>,
+    /// A portra-looks film LUT (its TITLE says "RAW-log in"): it takes scene-linear sRGB through
+    /// [`film_shaper`] and replaces the tone map, instead of grading the finished colour.
+    pub raw_log: bool,
+}
+
+/// The portra-looks "RAW log" input of a film LUT, per channel:
+/// u = (log2(lin/0.18 + 2^-12) + 9) / 15, clipped to 0..1 (lin: linear sRGB primaries, unclipped).
+pub fn film_shaper(lin: [f32; 3]) -> [f32; 3] {
+    lin.map(|v| (((v.max(0.0) / 0.18 + 2f32.powi(-12)).log2() + 9.0) / 15.0).clamp(0.0, 1.0))
 }
 
 impl Lut3d {
@@ -60,7 +69,8 @@ impl Lut3d {
         if data.len() != size * size * size {
             return Err(format!("expected {} entries, found {}", size * size * size, data.len()));
         }
-        Ok(Lut3d { size, data, domain_min: min, domain_max: max, title })
+        let raw_log = title.as_deref().is_some_and(|t| t.contains("RAW-log in"));
+        Ok(Lut3d { size, data, domain_min: min, domain_max: max, title, raw_log })
     }
 
     /// Look up `c` (trilinear).
@@ -143,6 +153,17 @@ mod tests {
         assert!((v[0] - 0.8).abs() < 1e-5 && (v[2] - 0.1).abs() < 1e-5, "{v:?}");
         assert!(Lut3d::parse_cube("LUT_1D_SIZE 4\n0 0 0").is_err());
         assert!(Lut3d::parse_cube("LUT_3D_SIZE 2\n0 0 0\n").is_err(), "too few entries");
+    }
+
+    #[test]
+    fn film_lut_detected_and_shaped() {
+        let film = Lut3d::parse_cube(&cube(|c| c, 2).replace("TITLE \"test\"", "TITLE \"portra-looks RAW x: RAW-log in (u = …)\"")).unwrap();
+        assert!(film.raw_log);
+        assert!(!Lut3d::parse_cube(&cube(|c| c, 2)).unwrap().raw_log);
+        // mid grey sits at u = 9/15, the clip points at lin ≈ 0 and 0.18 · 2^6
+        let u = film_shaper([0.18, 0.0, 100.0]);
+        assert!((u[0] - (9.0 + (1.0f32 + 2f32.powi(-12)).log2()) / 15.0).abs() < 1e-6, "{u:?}");
+        assert_eq!((u[1], u[2]), (0.0, 1.0));
     }
 
     #[test]

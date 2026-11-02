@@ -247,6 +247,8 @@ pub fn decode(bytes: &[u8]) -> Result<(Rgb32f, Option<CameraTone>, Option<Source
         mattes: (!mattes.is_empty()).then(|| Arc::new(mattes)),
         local_tone: f.local_tone.map(Arc::new),
         native_long: None,
+        // (a smart preview keeps no camera JPEG: film LUTs start at Exposure 0 here)
+        film_ev: 0.0,
     });
     Ok((img, tone, info))
 }

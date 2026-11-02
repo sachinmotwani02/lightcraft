@@ -154,6 +154,8 @@ pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
 pub struct FinishParams {
     /// A LUT profile and its amount (0..2), applied to the display-encoded colour.
     pub lut: Option<(std::sync::Arc<crate::lut::Lut3d>, f32)>,
+    /// A film LUT's input gain: the source's camera exposure ([`SourceInfo::film_ev`]).
+    pub film_gain: f32,
     pub tone: ToneMap,
     pub ops: ColorOps,
     /// Calibration: primaries matrix (row-major, linear Rec.2020) and shadows tint (−1..1).
@@ -241,6 +243,7 @@ impl FinishParams {
             shadow_tint: if calibration { (s.calibration.shadows_tint / 100.0) as f32 } else { 0.0 },
             tone: base_tone(s, info, peak),
             lut: crate::lut::get(&s.profile.id).map(|l| (l, (s.profile.amount / 100.0).clamp(0.0, 2.0) as f32)),
+            film_gain: info.film_ev.exp2(),
             ops: ColorOps::new(s),
             curves: curve_luts(&s.curve),
             refine_sat: (s.curve.refine_saturation / 100.0).clamp(0.0, 1.0) as f32,
@@ -376,7 +379,11 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
     store: impl Fn([f32; 3]) -> T + Sync + Send,
 ) -> Vec<T> {
     let (w, h) = (p.img.width, p.img.height);
-    let p_lut = fp.lut.clone();
+    // a portra-looks film LUT (raw_log) replaces the tone map; any other LUT grades the finished colour
+    let film = fp.lut.clone().filter(|(l, _)| l.raw_log);
+    let p_lut = fp.lut.clone().filter(|(l, _)| !l.raw_log);
+    let to_709 = lightcraft_color::REC2020.to_space(&lightcraft_color::SRGB).to_f32();
+    let from_709 = lightcraft_color::SRGB.to_space(&lightcraft_color::REC2020).to_f32();
     let FinishParams { curves, vig, to_out, out_luma, grain, .. } = fp;
     let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
     let out_to_norm = fp.out_to_norm;
@@ -426,6 +433,13 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             if mx > peak {
                 let t = ((mx - peak) / (mx - o).max(1e-6)).clamp(0.0, 1.0);
                 d = d.map(|v| v + (o - v) * t);
+            }
+
+            // --- film LUT: scene-linear sRGB → RAW log → LUT (sRGB out), blended by the profile amount
+            if let Some((l, k)) = &film {
+                let m = l.apply(crate::lut::film_shaper(mul3(&to_709, c).map(|v| v * fp.film_gain)));
+                let f = mul3(&from_709, m.map(|v| lightcraft_color::transfer::srgb_to_linear(v.clamp(0.0, 1.0))));
+                d = std::array::from_fn(|i| d[i] + (f[i] - d[i]) * k);
             }
 
             // --- colour

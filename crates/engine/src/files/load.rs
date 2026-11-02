@@ -1,5 +1,5 @@
 use super::colour::bin_factor;
-use super::preview::{fit_box, load_embedded_preview};
+use super::preview::{embedded_preview_srgb, fit_box, load_embedded_preview};
 use super::probe::preview_reason;
 use super::{Arc, CameraColourModel, DenoiseSpec, Filter, HIGHLIGHT_CLIP, Orientation, Rgb32f, SourceInfo, fit, xy_to_temp_tint};
 
@@ -109,6 +109,7 @@ fn load_bytes_now(
             },
             || dng_mattes(&bytes, &info),
         );
+        let camera_y = camera_median_y(&bytes);
         drop(bytes);
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
@@ -186,10 +187,12 @@ fn load_bytes_now(
         let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
         let local_tone = local_tone(&raw);
         let (temp, tint) = scale.as_shot(xy);
+        let film_ev = camera_y.map_or(0.0, |y| film_ev(y, &img));
         return Ok((
             img,
             twin,
             SourceInfo {
+                film_ev,
                 raw: true,
                 as_shot_temp: temp,
                 as_shot_tint: tint,
@@ -211,6 +214,31 @@ fn load_bytes_now(
     let img = d.to_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
     Ok((img.into_oriented(Orientation::from_exif(d.orientation)), None, SourceInfo::default(), false))
+}
+
+fn median(mut v: Vec<f32>) -> f32 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    let mid = v.len() / 2;
+    *v.select_nth_unstable_by(mid, f32::total_cmp).1
+}
+
+/// The median linear luminance of a raw's embedded camera JPEG (for [`film_ev`]).
+fn camera_median_y(bytes: &[u8]) -> Option<f32> {
+    let jpeg = embedded_preview_srgb(bytes, 1024)?;
+    let dec = lightcraft_color::transfer::decode_srgb8;
+    let w = lightcraft_color::LUMA_709;
+    Some(median(jpeg.data.iter().map(|p| w[0] * dec(p[0]) + w[1] * dec(p[1]) + w[2] * dec(p[2])).collect()))
+}
+
+/// portra-looks' exposure k for film LUT profiles (`raw_film.py`'s "camera" k): log2 of the camera JPEG's median
+/// luminance over the developed raw's, both linear.
+fn film_ev(camera_y: f32, img: &Rgb32f) -> f32 {
+    let step = (img.data.len() / 250_000).max(1);
+    let developed = median(img.data.iter().step_by(step).map(|&c| lightcraft_color::luminance_2020(c).max(0.0)).collect());
+    let ev = (camera_y / developed).log2();
+    if ev.is_finite() { ev.clamp(-4.0, 4.0) } else { 0.0 }
 }
 
 /// Which white-balance scale a raw is edited on, decided from the file alone, the way the catalog decides it from
