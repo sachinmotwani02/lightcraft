@@ -371,7 +371,11 @@ mod tests {
         (0..w * h)
             .map(|i| {
                 let (x, y) = ((i % w) as f32, (i / w) as f32);
-                [0.5 + 0.4 * (x * 0.21).sin(), 0.45 + 0.4 * (y * 0.13).cos(), if (x as usize / 9 + y as usize / 7) % 2 == 0 { 0.9 } else { 0.2 }]
+                [
+                    0.5 + 0.4 * (x * 0.21).sin(),
+                    0.45 + 0.4 * (y * 0.13).cos(),
+                    if (x as usize / 9 + y as usize / 7).is_multiple_of(2) { 0.9 } else { 0.2 },
+                ]
             })
             .collect()
     }
