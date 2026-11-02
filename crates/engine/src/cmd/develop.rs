@@ -560,7 +560,16 @@ pub fn specs() -> Vec<CommandSpec> {
             if !crate::presets::PROFILES.iter().any(|x| x.id == id) && !s.lut_profiles.iter().any(|x| x.id == id) {
                 return Err(bad("develop.profile", format!("unknown profile `{id}`")));
             }
+            // portra-looks film profiles drop the photo's default (raw) sharpening, as raw_film.py doesn't sharpen;
+            // leaving film for a normal profile brings it back. Sharpening set by hand stays as it is.
+            let film = |id: &str| lightcraft_pipeline::lut::get(id).is_some_and(|l| l.raw_log);
+            let default_sharpen = s.active().and_then(|a| s.catalog.photo(a)).map_or(0.0, |ph| ph.import_defaults().detail.sharpen_amount);
             edit(s, "develop.profile", "Profile", |d| {
+                match (film(&d.profile.id), film(&id)) {
+                    (false, true) if d.detail.sharpen_amount == default_sharpen => d.detail.sharpen_amount = 0.0,
+                    (true, false) if d.detail.sharpen_amount == 0.0 => d.detail.sharpen_amount = default_sharpen,
+                    _ => {}
+                }
                 d.profile.id = id.clone();
                 d.profile.amount = f64_or(p, "amount", d.profile.amount).clamp(0.0, 200.0);
                 Ok(())

@@ -1,5 +1,5 @@
 use super::colour::bin_factor;
-use super::preview::{embedded_preview_srgb, fit_box, load_embedded_preview};
+use super::preview::{decode_raw_preview, embedded_preview_size, fit_box, load_embedded_preview};
 use super::probe::preview_reason;
 use super::{Arc, CameraColourModel, DenoiseSpec, Filter, HIGHLIGHT_CLIP, Orientation, Rgb32f, SourceInfo, fit, xy_to_temp_tint};
 
@@ -224,9 +224,13 @@ fn median(mut v: Vec<f32>) -> f32 {
     *v.select_nth_unstable_by(mid, f32::total_cmp).1
 }
 
-/// The median linear luminance of a raw's embedded camera JPEG (for [`film_ev`]).
+/// The median linear luminance of a raw's embedded camera JPEG (for [`film_ev`]), taken as `raw_film.py` takes it:
+/// the largest preview, DCT-scaled by 1/2, 1/4 or 1/8 while it stays at least 1024 × 768 (PIL `draft`) and not
+/// resized further (resizing to 1024 px in linear light lifted the median of contrasty sunny scenes by ~0.05 stops).
 fn camera_median_y(bytes: &[u8]) -> Option<f32> {
-    let jpeg = embedded_preview_srgb(bytes, 1024)?;
+    let (long, short) = embedded_preview_size(bytes).map(|(a, b)| (a.max(b), a.min(b)))?;
+    let s = [8, 4, 2].into_iter().find(|s| long / s >= 1024 && short / s >= 768).unwrap_or(1);
+    let jpeg = decode_raw_preview(bytes, fit_box(long.div_ceil(s) as usize), None)?.to_srgb8();
     let dec = lightcraft_color::transfer::decode_srgb8;
     let w = lightcraft_color::LUMA_709;
     Some(median(jpeg.data.iter().map(|p| w[0] * dec(p[0]) + w[1] * dec(p[1]) + w[2] * dec(p[2])).collect()))
