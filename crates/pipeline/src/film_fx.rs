@@ -180,7 +180,8 @@ fn soften(img: &mut [[f32; 3]], w: usize, h: usize, p: &Soft, sc: f32, dehalo_px
 
 /// scipy's Gaussian kernel: radius `int(4σ + 0.5)`, normalized.
 fn kernel(sigma: f32) -> Vec<f32> {
-    let r = (4.0 * sigma + 0.5) as i64;
+    // (capped: a degenerate frame size must not ask for a huge kernel)
+    let r = ((4.0 * sigma + 0.5) as i64).clamp(0, 1024);
     let k: Vec<f32> = (-r..=r).map(|x| (-0.5 * (x as f32 / sigma).powi(2)).exp()).collect();
     let s: f32 = k.iter().sum();
     k.into_iter().map(|v| v / s).collect()
