@@ -151,8 +151,51 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"imported": imported, "failed": failed}))
 }
 
+/// portra-looks fork: the active photo's look (its film LUT, Exposure, white balance, colour and curves) as a new film
+/// LUT, written to `path` (see `lightcraft_pipeline::bake`).
+fn bake_film(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "profile.bakeFilm";
+    let path = str_param(p, "path").ok_or_else(|| bad(C, "missing path"))?.to_string();
+    let size = p.get("size").and_then(Value::as_u64).unwrap_or(65).clamp(2, 129) as usize;
+    let id = s.active().ok_or_else(|| bad(C, "no active photo"))?;
+    // the decoded raw's facts (white balance, camera exposure), not the file header's
+    s.source_now(id, crate::media::SourceLevel::Preview).map_err(|e| bad(C, e))?;
+    let info = s.source_info(id);
+    let d = s.develop_of(id).unwrap_or_default();
+    let source = s.lut_profiles.iter().find(|x| x.id == d.profile.id).map_or_else(|| d.profile.id.clone(), |x| x.name.clone());
+    let mut warnings: Vec<String> = Vec::new();
+    if !lightcraft_pipeline::lut::get(&d.profile.id).is_some_and(|l| l.raw_log) {
+        warnings.push(format!("the profile `{source}` is not a film LUT: baked LightCraft's own tone map for this photo"));
+    }
+    if !info.raw {
+        warnings.push("not a raw photo: film LUTs take a raw's linear colour".into());
+    }
+    let skipped = lightcraft_pipeline::bake::not_baked(&d, &info);
+    if !skipped.is_empty() {
+        warnings.push(format!("not baked (they need neighbours or a position): {}", skipped.join(", ")));
+    }
+    let stem = Path::new(&path).file_stem().map(|n| n.to_string_lossy().trim_start_matches("raw_").to_string()).unwrap_or_default();
+    let name = str_param(p, "title").map_or(stem, str::to_string);
+    let title = format!(
+        "portra-looks RAW {name}: RAW-log in (u = (log2(lin/0.18 + 2^-12) + 9) / 15), sRGB out; baked in LightCraft from {source} at {:.0} %",
+        d.profile.amount
+    );
+    let entries = lightcraft_pipeline::bake::bake_film(&info, &d, size);
+    std::fs::write(&path, lightcraft_pipeline::bake::to_cube(&title, size, &entries)).map_err(|e| bad(C, format!("{path}: {e}")))?;
+    Ok(json!({"path": path, "title": title, "size": size, "source": source, "warnings": warnings}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            query "profile.bakeFilm",
+            "Bake Film LUT",
+            [],
+            None,
+            "{path: .cube, size?: 65, title?} — portra-looks: bake the active photo's look (film LUT at its Amount, Exposure, white balance, calibration, colour, curves) into a RAW-log film LUT; spatial and local settings are left out and listed in warnings → {path, title, size, source, warnings}",
+            super::has_active,
+            bake_film
+        ),
         cmd!(
             "profile.import",
             "Import Profiles",
