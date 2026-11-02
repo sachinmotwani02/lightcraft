@@ -29,6 +29,7 @@ pub mod colorops;
 pub mod cull;
 pub mod curve;
 pub mod dust;
+pub mod film_fx;
 pub mod finish;
 pub mod geometry;
 pub mod local;
@@ -446,6 +447,8 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
             }
             // (spots grow the rendered window; only 8-bit renders are cut back to the request)
             let work = if req.depth == OutputDepth::U8 { spots::window_for_reads(s, &frame, full_w, full_h, px_per_long, win) } else { win };
+            // (film softness reads neighbours too: grow by its margin; fork)
+            let work = if req.depth == OutputDepth::U8 { film_fx::grow(s, full_w, full_h, work) } else { work };
             if work != win {
                 keep = Some(PixelWindow { x: win.x - work.x, y: win.y - work.y, ..win });
             }
