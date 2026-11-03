@@ -147,6 +147,41 @@ fn reset_edits_restores_a_raws_import_defaults() {
     }
 }
 
+/// A film LUT profile (portra-looks RAW-log) drops a raw's default sharpening and a normal profile brings it back;
+/// sharpening set by hand stays.
+#[test]
+fn film_profiles_leave_out_default_raw_sharpening() {
+    use lightcraft_catalog::{Photo, PhotoId, Source};
+    use lightcraft_develop::DevelopSettings;
+    let mut s = demo();
+    let film = "lut:portra-film-sharpen-test";
+    let cube = "TITLE \"portra-looks RAW test: RAW-log in\"\nLUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    lightcraft_pipeline::lut::register(film, lightcraft_pipeline::lut::Lut3d::parse_cube(cube).unwrap());
+    s.lut_profiles.push(crate::cmd::lut_profiles::LutProfile {
+        id: film.into(),
+        name: "Test".into(),
+        group: "Portra film".into(),
+        file: String::new(),
+    });
+    let mut p = Photo::new(PhotoId(300), Source::File { path: "p300.DNG".into() }, "p300.DNG", "DNG", 16, 16, "");
+    p.as_shot_wb = Some((5200.0, 4.0));
+    p.develop = std::sync::Arc::new(DevelopSettings::for_raw(5200.0, 4.0));
+    s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    s.execute("library.select", &json!({"ids": [300], "active": 300})).unwrap();
+    let sharpen = |s: &Session| active_dev(s).detail.sharpen_amount;
+    s.execute("develop.profile", &json!({"id": film})).unwrap();
+    assert_eq!(sharpen(&s), 0.0, "film: no default sharpening");
+    s.execute("develop.profile", &json!({"id": "lc.color"})).unwrap();
+    assert_eq!(sharpen(&s), 40.0, "back to a normal profile: default restored");
+    s.execute("develop.profile", &json!({"id": film})).unwrap();
+    s.execute("develop.set", &json!({"control": "detail.sharpenAmount", "value": 25})).unwrap();
+    s.execute("develop.profile", &json!({"id": "lc.color"})).unwrap();
+    assert_eq!(sharpen(&s), 25.0, "hand-set sharpening is kept");
+    s.execute("develop.profile", &json!({"id": film})).unwrap();
+    assert_eq!(sharpen(&s), 25.0, "and kept on film too");
+    lightcraft_pipeline::lut::unregister(film);
+}
+
 #[test]
 fn demo_library_loads() {
     let mut s = demo();
