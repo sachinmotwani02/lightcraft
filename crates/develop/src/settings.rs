@@ -199,11 +199,17 @@ pub struct Profile {
     /// settings without it keep their JSON (and hash).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub camera_local_tone: bool,
+    /// portra-looks film softness after a film LUT profile, 0..100 (fork; omitted when 0).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub film_soft: f64,
+    /// portra-looks film grain after a film LUT profile: 0 none, 1 subtle, 2 fine, 3 strong (fork; omitted when 0).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub film_grain: f64,
 }
 
 impl Default for Profile {
     fn default() -> Self {
-        Self { id: "lc.color".into(), amount: 100.0, camera_local_tone: false }
+        Self { id: "lc.color".into(), amount: 100.0, camera_local_tone: false, film_soft: 0.0, film_grain: 0.0 }
     }
 }
 

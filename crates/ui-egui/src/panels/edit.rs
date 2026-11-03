@@ -135,6 +135,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     });
     if d.profile.id != "lc.color" {
         control(app, ui, &d, "profile.amount", true);
+        // portra-looks film stages, after a film LUT only (fork)
+        if lightcraft_pipeline::lut::get(&d.profile.id).is_some_and(|l| l.raw_log) {
+            control(app, ui, &d, "film.soft", true);
+            control(app, ui, &d, "film.grain", true);
+        }
         ui.add_space(6.0);
     }
     // a raw carrying its own local tone mapping (Apple ProRAW's gain table map): off renders it as

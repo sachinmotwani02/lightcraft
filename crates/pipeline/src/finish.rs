@@ -199,6 +199,8 @@ pub struct FinishParams {
     /// Peak linear output relative to SDR white: 1 for SDR renders; `2^max_ev` for an HDR render
     /// ([`OutputDepth::F32Hdr`] with HDR on), which keeps values above 1 instead of clipping them.
     pub peak: f32,
+    /// portra-looks film softness and grain after a film LUT ([`crate::film_fx`]; fork).
+    pub film_fx: Option<crate::film_fx::FilmFx>,
 }
 
 pub struct FinishParamsInput<'a> {
@@ -271,6 +273,7 @@ impl FinishParams {
             h,
             px_per_long,
             view: frame.view.map_or([0.0, 0.0, w as f32, h as f32], |v| [v.x as f32, v.y as f32, v.full_w as f32, v.full_h as f32]),
+            film_fx: crate::film_fx::FilmFx::new(s, info, frame, (w, h), px_per_long, peak),
         }
     }
 
@@ -378,6 +381,21 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
     exact: bool,
     store: impl Fn([f32; 3]) -> T + Sync + Send,
 ) -> Vec<T> {
+    // portra-looks film softness and grain (fork): spatial passes over the finished image
+    if let Some(fx) = &fp.film_fx {
+        let mut e = finish_pixels(p, fp, exact, |e| e);
+        fx.apply(&mut e, p.img.width, p.img.height);
+        let mut out = vec![T::default(); e.len()];
+        for_rows(&mut out, p.img.width, |y, row| {
+            let w = row.len();
+            row.iter_mut().zip(&e[y * w..]).for_each(|(o, &v)| *o = store(v));
+        });
+        return out;
+    }
+    finish_pixels(p, fp, exact, store)
+}
+
+fn finish_pixels<T: Copy + Default + Send>(p: &Prepared, fp: &FinishParams, exact: bool, store: impl Fn([f32; 3]) -> T + Sync + Send) -> Vec<T> {
     let (w, h) = (p.img.width, p.img.height);
     // a portra-looks film LUT (raw_log) replaces the tone map; any other LUT grades the finished colour
     let film = fp.lut.clone().filter(|(l, _)| l.raw_log);
